@@ -35,16 +35,32 @@
 </head>
 <body class="bg-slate-50 text-slate-800 dark:bg-slate-950 dark:text-slate-100 min-h-screen flex flex-col transition-colors duration-300">
     <div id="root"></div>
-
     <script type="text/babel">
         const { useState, useEffect, useRef, useMemo } = React;
+
+        // ==========================================================================
+        // KONFIGURASI KONEKSI GOOGLE SHEETS (BACKEND)
+        // Tempel URL deploy Google Apps Script Anda SEKALI di sini, lalu commit ke
+        // GitHub. Semua pengunjung situs otomatis terhubung tanpa perlu input apa pun.
+        //
+        // CATATAN KEAMANAN: URL ini BUKAN rahasia (sifatnya sama seperti alamat
+        // endpoint API pada umumnya) dan akan selalu terlihat siapa pun yang membuka
+        // "View Source" di browser mereka. Ini TIDAK BISA disembunyikan sepenuhnya
+        // selama frontend berjalan murni di browser (statik, seperti GitHub Pages).
+        // Keamanan yang sesungguhnya ada di sisi BACKEND (file Code.gs terpisah):
+        //   - Password di-hash (SHA-256), tidak pernah disimpan sebagai teks biasa.
+        //   - Endpoint getInitialData TIDAK mengirim tabel users/password ke publik.
+        //   - Login memakai POST (bukan GET), agar password tidak nyangkut di
+        //     riwayat browser / log server.
+        // Lihat file Code.gs yang menyertai proyek ini untuk implementasi lengkap.
+        // ==========================================================================
+        const GAS_URL = "https://script.google.com/macros/s/AKfycbzRH4R_29PhNyv7jZYbCwljHeAuzODGLGuEt2ohk_mkr_TL3V092-TUqjmJmWqbcGhU/exec";
 
         const CATEGORIES = [
             "ATK", "Pertanian", "Bangunan", "Rumah Tangga", 
             "Nelayan", "Kelistrikan", "Olahraga", "Aksesoris HP", 
             "Air Galon", "Es Batu"
         ];
-
         const MOCK_PRODUCTS = [
             { id: 1, name: "Kertas HVS A4 75gr", barcode: "8991001", price: 55000, stock: 50, category: "ATK", image: "https://images.unsplash.com/photo-1586075010923-2dd4570fb338?w=300&auto=format&fit=crop&q=60" },
             { id: 2, name: "Cangkul Baja Asli", barcode: "8991002", price: 85000, stock: 15, category: "Pertanian", image: "https://images.unsplash.com/photo-1416879598555-08106200259e?w=300&auto=format&fit=crop&q=60" },
@@ -52,30 +68,59 @@
             { id: 4, name: "Sapu Ijuk Super", barcode: "8991004", price: 25000, stock: 30, category: "Rumah Tangga", image: "https://images.unsplash.com/photo-1585909695029-4d69b33a59d9?w=300&auto=format&fit=crop&q=60" },
             { id: 5, name: "Jaring Lempar 2 Meter", barcode: "8991005", price: 150000, stock: 8, category: "Nelayan", image: "https://images.unsplash.com/photo-1519782522770-38827ab20cb1?w=300&auto=format&fit=crop&q=60" }
         ];
-
         const MOCK_USERS = [
             { id: 1, username: 'pegawai', password: '123', role: 'staff', name: 'Budi (Kasir)' },
             { id: 2, username: 'admin', password: '123', role: 'admin', name: 'Siti (Admin)' },
             { id: 3, username: 'owner', password: '123', role: 'owner', name: 'Bapak Bos AM Mart' }
         ];
 
+        // ==========================================================================
+        // KOMPONEN LOGO — otomatis beralih ke logo SVG buatan sendiri (kode, bukan
+        // gambar) jika file logoammart.png gagal dimuat (misalnya lupa di-upload
+        // ke repo GitHub, salah path, atau koneksi lambat).
+        // ==========================================================================
+        const Logo = ({ className = "h-12 w-auto" }) => {
+            const [imgError, setImgError] = useState(false);
+
+            if (imgError) {
+                return (
+                    <svg viewBox="0 0 200 110" className={className} xmlns="http://www.w3.org/2000/svg" role="img" aria-label="AM Mart">
+                        <text x="100" y="80" textAnchor="middle"
+                              fontSize="85" fontWeight="900" fill="#e10600"
+                              fontFamily="Georgia, 'Times New Roman', serif"
+                              style={{ letterSpacing: '-3px' }}>
+                            AM
+                        </text>
+                        <path d="M 62 52 Q 78 40 92 52 Q 78 66 62 52 Z" fill="#4caf3f" />
+                        <line x1="55" y1="60" x2="72" y2="52" stroke="#4caf3f" strokeWidth="2.5" />
+                    </svg>
+                );
+            }
+
+            return (
+                <img
+                    src="logoammart.png"
+                    alt="AM Mart - Kampung Pantai Harapan"
+                    className={className}
+                    onError={() => setImgError(true)}
+                />
+            );
+        };
+
         const App = () => {
-            const [gasUrl, setGasUrl] = useState(() => localStorage.getItem("am_mart_gas_url") || "");
+            const [gasUrl] = useState(GAS_URL);
             const [isOffline, setIsOffline] = useState(true);
             const [isLoading, setIsLoading] = useState(false);
             const [darkMode, setDarkMode] = useState(false);
             const [activeTab, setActiveTab] = useState('catalog');
             const [currentUser, setCurrentUser] = useState(null);
-
             const [products, setProducts] = useState(MOCK_PRODUCTS);
             const [users, setUsers] = useState(MOCK_USERS);
             const [transactions, setTransactions] = useState([]);
             const [bookings, setBookings] = useState([]);
             const [promos, setPromos] = useState([]);
             const [cart, setCart] = useState([]);
-
             const [notification, setNotification] = useState(null);
-
             // Modal States
             const [showLoginModal, setShowLoginModal] = useState(false);
             const [loginForm, setLoginForm] = useState({ username: '', password: '' });
@@ -84,14 +129,12 @@
             const [showReceiptModal, setShowReceiptModal] = useState(null);
             const [showPaymentSuccess, setShowPaymentSuccess] = useState(null);
             const [customConfirm, setCustomConfirm] = useState(null);
-
             // Form inputs
             const [newProduct, setNewProduct] = useState({ name: '', barcode: '', price: '', stock: '', category: 'ATK', image: '' });
             const [isEditingProduct, setIsEditingProduct] = useState(null);
             const [newUser, setNewUser] = useState({ name: '', username: '', password: '', role: 'staff' });
             const [isEditingUser, setIsEditingUser] = useState(null);
             const [customerName, setCustomerName] = useState('');
-
             // POS States
             const [posCart, setPosCart] = useState([]);
             const [bookingCodeInput, setBookingCodeInput] = useState('');
@@ -100,14 +143,12 @@
             const [posSuggestions, setPosSuggestions] = useState([]);
             const [focusedSuggestionIndex, setFocusedSuggestionIndex] = useState(-1);
             const [isScanningPOS, setIsScanningPOS] = useState(false);
-
             // Filter States
             const [reportFilter, setReportFilter] = useState('all');
             const [customDateStart, setCustomDateStart] = useState('');
             const [customDateEnd, setCustomDateEnd] = useState('');
             const [searchQuery, setSearchQuery] = useState('');
             const [selectedCategory, setSelectedCategory] = useState('Semua');
-
             const posSearchInputRef = useRef(null);
             const html5QrCodeRef = useRef(null);
 
@@ -116,29 +157,33 @@
                 setTimeout(() => setNotification(null), 3000);
             };
 
-            useEffect(() => {
-                if (gasUrl) {
-                    setIsLoading(true);
-                    fetch(`${gasUrl}?action=getInitialData`)
-                        .then(res => res.json())
-                        .then(data => {
-                            if (data.products) setProducts(data.products);
-                            if (data.users) setUsers(data.users);
-                            if (data.transactions) setTransactions(data.transactions);
-                            if (data.bookings) setBookings(data.bookings);
-                            if (data.promos) setPromos(data.promos);
-                            setIsOffline(false);
-                            triggerNotification("Koneksi API Google Sheets Berhasil!", "success");
-                        })
-                        .catch(err => {
-                            console.warn("Koneksi gagal, beralih ke Mode Offline.");
-                            setIsOffline(true);
-                        })
-                        .finally(() => setIsLoading(false));
-                } else {
+            const loadInitialData = () => {
+                if (!gasUrl || gasUrl.includes("AKfycbXXXX")) {
                     setIsOffline(true);
+                    return;
                 }
-            }, [gasUrl]);
+                setIsLoading(true);
+                fetch(`${gasUrl}?action=getInitialData`)
+                    .then(res => res.json())
+                    .then(data => {
+                        if (data.products) setProducts(data.products);
+                        if (data.transactions) setTransactions(data.transactions);
+                        if (data.bookings) setBookings(data.bookings);
+                        if (data.promos) setPromos(data.promos);
+                        setIsOffline(false);
+                        triggerNotification("Koneksi API Google Sheets Berhasil!", "success");
+                    })
+                    .catch(err => {
+                        console.warn("Koneksi gagal, beralih ke Mode Offline.");
+                        setIsOffline(true);
+                    })
+                    .finally(() => setIsLoading(false));
+            };
+
+            useEffect(() => {
+                loadInitialData();
+                // eslint-disable-next-line react-hooks/exhaustive-deps
+            }, []);
 
             useEffect(() => {
                 if (isScanningPOS) {
@@ -221,6 +266,25 @@
                 setPosCart(prev => prev.map(item => item.id === productId ? { ...item, quantity: newQty } : item));
             };
 
+            // Perbaikan: fungsi ini sebelumnya dipanggil dari tombol +/- di keranjang
+            // Toko Online (booking) tapi tidak pernah didefinisikan -> tombol error.
+            const updateCartQty = (productId, delta) => {
+                const product = products.find(p => p.id === productId);
+                setCart(prev => {
+                    return prev
+                        .map(item => {
+                            if (item.id !== productId) return item;
+                            const newQty = item.quantity + delta;
+                            if (product && newQty > product.stock) {
+                                triggerNotification("Stok tidak mencukupi!", "error");
+                                return item;
+                            }
+                            return { ...item, quantity: newQty };
+                        })
+                        .filter(item => item.quantity > 0);
+                });
+            };
+
             const handlePosSearchChange = (e) => {
                 const val = e.target.value;
                 setPosSearchTerm(val);
@@ -250,7 +314,6 @@
                     } else if (posSuggestions.length === 1) {
                         addPosItem(posSuggestions[0]);
                     } else if (posSearchTerm.length > 0) {
-                        // Coba cari kecocokan barcode eksak
                         const exactBarcode = products.find(p => p.barcode.toString() === posSearchTerm.trim());
                         if (exactBarcode) {
                             addPosItem(exactBarcode);
@@ -266,7 +329,6 @@
                 const total = currentPosTotal;
                 const cash = parseFloat(cashAmount);
                 if (cash < total) return triggerNotification("Pembayaran tunai kurang!", "error");
-
                 const invoiceId = "INV-" + new Date().getTime().toString().slice(-6);
                 const newTransaction = {
                     id: invoiceId,
@@ -280,28 +342,22 @@
                     total,
                     cashier: currentUser ? currentUser.name : "Kasir Utama"
                 };
-
-                // Perbarui data lokal
                 setTransactions(prev => [newTransaction, ...prev]);
                 setProducts(prev => prev.map(p => {
                     const soldItem = posCart.find(item => item.id === p.id);
                     return soldItem ? { ...p, stock: p.stock - soldItem.quantity } : p;
                 }));
-
                 if (bookingCodeInput) {
                     setBookings(prev => prev.map(b => b.id === bookingCodeInput ? { ...b, status: 'Selesai' } : b));
                 }
-
-                // Kirim perubahan ke Google Sheets
                 if (!isOffline && gasUrl) {
                     fetch(gasUrl, {
                         method: 'POST',
                         mode: 'no-cors',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify({ action: 'processTransaction', transaction: newTransaction })
                     });
                 }
-
                 setShowPaymentSuccess({ ...newTransaction, cash, change: cash - total });
                 setPosCart([]);
                 setCashAmount('');
@@ -322,12 +378,11 @@
                 }
                 setProducts(updatedProducts);
                 setShowProductModal(false);
-
                 if (!isOffline && gasUrl) {
                     fetch(gasUrl, {
                         method: 'POST',
                         mode: 'no-cors',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify({ action: 'saveProducts', products: updatedProducts })
                     });
                 }
@@ -341,12 +396,11 @@
                         const nextProducts = products.filter(p => p.id !== id);
                         setProducts(nextProducts);
                         triggerNotification("Produk berhasil dihapus.");
-
                         if (!isOffline && gasUrl) {
                             fetch(gasUrl, {
                                 method: 'POST',
                                 mode: 'no-cors',
-                                headers: { 'Content-Type': 'application/json' },
+                                headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                                 body: JSON.stringify({ action: 'saveProducts', products: nextProducts })
                             });
                         }
@@ -356,12 +410,24 @@
                 });
             };
 
+            // ======================================================================
+            // LOGIN — sekarang selalu memakai POST (bukan query string GET), agar
+            // username & password tidak tersimpan di riwayat browser / log server.
+            // ======================================================================
             const handleLoginSubmit = (e) => {
                 e.preventDefault();
                 setIsLoading(true);
 
                 if (!isOffline && gasUrl) {
-                    fetch(`${gasUrl}?action=login&username=${encodeURIComponent(loginForm.username)}&password=${encodeURIComponent(loginForm.password)}`)
+                    fetch(gasUrl, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+                        body: JSON.stringify({
+                            action: 'login',
+                            username: loginForm.username,
+                            password: loginForm.password
+                        })
+                    })
                         .then(res => res.json())
                         .then(data => {
                             if (data.success) {
@@ -379,6 +445,7 @@
                         })
                         .finally(() => setIsLoading(false));
                 } else {
+                    // Mode offline/demo memakai MOCK_USERS lokal (hanya untuk uji coba tampilan)
                     const foundUser = users.find(u => u.username === loginForm.username.trim().toLowerCase() && u.password === loginForm.password);
                     setIsLoading(false);
                     if (foundUser) {
@@ -419,10 +486,8 @@
                 e.preventDefault();
                 if (cart.length === 0) return;
                 if (!customerName.trim()) return triggerNotification("Nama pemesan wajib diisi!", "error");
-
                 const bookingId = "B-" + Math.floor(1000 + Math.random() * 9000);
-                const expiryTime = new Date().getTime() + 180000; // Kadaluarsa dalam 3 menit
-
+                const expiryTime = new Date().getTime() + 180000;
                 const newBooking = {
                     id: bookingId,
                     customerName: customerName.trim(),
@@ -432,29 +497,25 @@
                     createdAt: new Date().getTime(),
                     expiresAt: expiryTime
                 };
-
                 setProducts(prev => prev.map(p => {
                     const cartItem = cart.find(item => item.id === p.id);
                     return cartItem ? { ...p, stock: p.stock - cartItem.quantity } : p;
                 }));
-
                 const nextBookings = [newBooking, ...bookings];
                 setBookings(nextBookings);
                 setShowReceiptModal(newBooking);
                 setCart([]);
                 setCustomerName('');
-
                 if (!isOffline && gasUrl) {
                     fetch(gasUrl, {
                         method: 'POST',
                         mode: 'no-cors',
-                        headers: { 'Content-Type': 'application/json' },
+                        headers: { 'Content-Type': 'text/plain;charset=utf-8' },
                         body: JSON.stringify({ action: 'syncBookings', bookings: nextBookings })
                     });
                 }
             };
 
-            // Mengatur mode gelap otomatis
             useEffect(() => {
                 if (darkMode) {
                     document.documentElement.classList.add('dark');
@@ -466,13 +527,11 @@
             const currentPosTotal = useMemo(() => {
                 return posCart.reduce((acc, item) => acc + (item.price * item.quantity), 0);
             }, [posCart]);
-
             const currentChange = useMemo(() => {
                 const cash = parseFloat(cashAmount);
                 if (isNaN(cash)) return -currentPosTotal;
                 return cash - currentPosTotal;
             }, [cashAmount, currentPosTotal]);
-
             const filteredTransactions = useMemo(() => {
                 const now = new Date();
                 return transactions.filter(trx => {
@@ -492,10 +551,8 @@
                     return true;
                 });
             }, [transactions, reportFilter, customDateStart, customDateEnd]);
-
             const totalRevenue = filteredTransactions.reduce((acc, trx) => acc + trx.total, 0);
             const totalItemsSold = filteredTransactions.reduce((acc, trx) => acc + trx.items.reduce((sum, item) => sum + item.quantity, 0), 0);
-
             const salesChartData = useMemo(() => {
                 const dailyMap = {};
                 filteredTransactions.forEach(trx => {
@@ -504,7 +561,6 @@
                 });
                 return Object.entries(dailyMap).slice(-7);
             }, [filteredTransactions]);
-
             const maxSaleValue = useMemo(() => {
                 const values = salesChartData.map(d => d[1]);
                 return values.length > 0 ? Math.max(...values, 1) : 1;
@@ -512,18 +568,16 @@
 
             return (
                 <div className="flex-grow flex flex-col">
-                    
                     {/* === HEADER NAVBAR === */}
                     <header className="bg-white dark:bg-slate-900 border-b border-slate-200 dark:border-slate-800 sticky top-0 z-40 shadow-sm transition-colors duration-300">
                         <div className="max-w-7xl mx-auto px-4 py-3 flex justify-between items-center flex-wrap gap-3">
                             <div className="flex items-center gap-3 cursor-pointer" onClick={() => setActiveTab('catalog')}>
-                                <div className="p-2 bg-indigo-600 rounded-xl text-white font-bold text-lg leading-none">AM</div>
+                                <Logo className="h-11 w-auto" />
                                 <div>
                                     <h1 className="text-base font-black tracking-tight leading-none text-slate-900 dark:text-white">AM Mart</h1>
                                     <p className="text-[9px] text-slate-400 font-bold uppercase tracking-wider mt-0.5">KAMPUNG PANTAI HARAPAN</p>
                                 </div>
                             </div>
-
                             <div className="flex items-center gap-2">
                                 {isOffline ? (
                                     <span className="bg-amber-100 text-amber-800 dark:bg-amber-950/40 dark:text-amber-400 text-[10px] font-bold px-3 py-1 rounded-full flex items-center gap-1.5 shadow-inner">
@@ -536,23 +590,18 @@
                                         ⚡ Sheets Terhubung
                                     </span>
                                 )}
-
                                 <button onClick={() => setDarkMode(!darkMode)} className="p-2 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:scale-105 transition-transform">
                                     {darkMode ? '☀️' : '🌙'}
                                 </button>
                             </div>
-
                             <div className="flex items-center gap-2">
                                 <button onClick={() => { setActiveTab('catalog'); stopPOSCamera(); }} className={`px-3.5 py-2 rounded-lg text-xs font-bold transition ${activeTab === 'catalog' ? 'bg-indigo-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>🛍️ Toko Online</button>
-                                
                                 {currentUser ? (
                                     <>
                                         <button onClick={() => setActiveTab('pos')} className={`px-3.5 py-2 rounded-lg text-xs font-bold transition ${activeTab === 'pos' ? 'bg-emerald-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>💼 Kasir</button>
-                                        
                                         {['admin', 'owner'].includes(currentUser.role) && (
                                             <button onClick={() => { setActiveTab('admin'); stopPOSCamera(); }} className={`px-3.5 py-2 rounded-lg text-xs font-bold transition ${activeTab === 'admin' ? 'bg-amber-500 text-slate-900' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>📦 Admin</button>
                                         )}
-                                        
                                         {currentUser.role === 'owner' && (
                                             <button onClick={() => { setActiveTab('owner'); stopPOSCamera(); }} className={`px-3.5 py-2 rounded-lg text-xs font-bold transition ${activeTab === 'owner' ? 'bg-blue-600 text-white' : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800'}`}>📈 Owner</button>
                                         )}
@@ -564,13 +613,8 @@
                             </div>
                         </div>
                     </header>
-
                     {/* === MAIN CONTAINER === */}
                     <main className="max-w-7xl mx-auto px-4 py-6 w-full flex-grow">
-
-                        {/* ========================================= */}
-                        {/* TAB 1: TOKO ONLINE (PELANGGAN) */}
-                        {/* ========================================= */}
                         {activeTab === 'catalog' && (
                             <div className="space-y-6">
                                 <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-indigo-900 rounded-3xl p-6 sm:p-10 text-white shadow-xl relative overflow-hidden">
@@ -581,7 +625,6 @@
                                         <p className="text-slate-300 text-xs leading-relaxed">Hindari antrean! Amankan barang pesanan Anda secara online. Dapatkan kode struk, tunjukkan di kasir AM Mart kami, dan selesaikan pembayaran (Berlaku 3 jam).</p>
                                     </div>
                                 </div>
-
                                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
                                     <div className="lg:col-span-3 space-y-4">
                                         <div className="bg-white dark:bg-slate-900 p-3 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-wrap gap-2 items-center shadow-sm">
@@ -593,7 +636,6 @@
                                                 <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-4 py-1.5 rounded-full text-xs font-bold transition border whitespace-nowrap ${selectedCategory === cat ? 'bg-indigo-600 text-white border-indigo-600 shadow-md' : 'bg-white dark:bg-slate-900 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-800'}`}>{cat}</button>
                                             ))}
                                         </div>
-
                                         <div className="grid grid-cols-2 md:grid-cols-3 xl:grid-cols-4 gap-4">
                                             {products.filter(p => (selectedCategory === 'Semua' || p.category === selectedCategory) && p.name.toLowerCase().includes(searchQuery.toLowerCase())).map(product => (
                                                 <div key={product.id} className="bg-white dark:bg-slate-900 rounded-2xl overflow-hidden border border-slate-200 dark:border-slate-800 flex flex-col justify-between hover:shadow-md transition">
@@ -613,8 +655,6 @@
                                             ))}
                                         </div>
                                     </div>
-
-                                    {/* KERANJANG BOOKING */}
                                     <div className="space-y-4">
                                         <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 sticky top-24">
                                             <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 pb-2 border-b dark:border-slate-800 mb-3 flex items-center gap-1.5">🛒 Keranjang Booking</h3>
@@ -647,14 +687,8 @@
                                 </div>
                             </div>
                         )}
-
-                        {/* ========================================= */}
-                        {/* TAB 2: KASIR (SMART POS SYSTEM) */}
-                        {/* ========================================= */}
                         {activeTab === 'pos' && currentUser && (
                             <div className="flex flex-col lg:flex-row gap-6 w-full items-start">
-                                
-                                {/* KIRI: PENCARIAN & TABEL BELANJA */}
                                 <div className="w-full lg:w-2/3 flex flex-col bg-white dark:bg-slate-900 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 overflow-hidden">
                                     <div className="p-4 bg-slate-50 dark:bg-slate-900/60 border-b border-slate-200 dark:border-slate-800 flex flex-wrap gap-3 items-center justify-between z-20">
                                         <div className="relative flex-1 min-w-[250px]">
@@ -681,8 +715,6 @@
                                         </div>
                                         <button onClick={() => setIsScanningPOS(true)} className="px-4 py-3 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700 shadow flex items-center gap-2 whitespace-nowrap">📸 Scanner Kamera</button>
                                     </div>
-
-                                    {/* Pemindai Kamera Nyata */}
                                     {isScanningPOS && (
                                         <div className="bg-slate-900 p-4 relative border-b-4 border-indigo-600">
                                             <button onClick={stopPOSCamera} className="absolute top-2 right-2 bg-rose-600 text-white px-3 py-1 rounded text-xs font-bold z-10 shadow-lg">Tutup</button>
@@ -692,8 +724,6 @@
                                             <p className="text-center text-xs text-indigo-400 mt-2 font-bold animate-pulse">Arahkan barcode / QR produk ke area lensa kamera</p>
                                         </div>
                                     )}
-
-                                    {/* Tabel Item POS */}
                                     <div className="flex-1 overflow-y-auto min-h-[300px]">
                                         <table className="w-full text-left">
                                             <thead className="bg-slate-100 dark:bg-slate-800 sticky top-0 shadow-sm z-10 text-slate-600 dark:text-slate-300 text-xs">
@@ -721,8 +751,6 @@
                                         </table>
                                     </div>
                                 </div>
-
-                                {/* KANAN: AREA PEMBAYARAN KASIR */}
                                 <div className="w-full lg:w-1/3 flex flex-col gap-4">
                                     <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800">
                                         <h4 className="text-xs font-bold text-slate-600 dark:text-slate-300 mb-2">Tarik Booking Online Pelanggan</h4>
@@ -735,14 +763,12 @@
                                             }} className="px-4 py-2 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">Tarik</button>
                                         </div>
                                     </div>
-
                                     <div className="bg-white dark:bg-slate-900 p-6 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-col w-full">
                                         <h3 className="text-slate-800 dark:text-slate-100 font-bold text-sm border-b dark:border-slate-800 pb-3 mb-4">Ringkasan Pembayaran</h3>
                                         <div className="flex justify-between items-end mb-4">
                                             <span className="text-slate-500 text-sm font-bold">Total Tagihan</span>
                                             <span className="text-3xl font-black text-indigo-700 dark:text-indigo-400">Rp {currentPosTotal.toLocaleString()}</span>
                                         </div>
-
                                         <div className="space-y-4">
                                             <div>
                                                 <label className="text-xs font-bold text-slate-600 dark:text-slate-300 block mb-2">Uang Tunai (Cash) Pelanggan</label>
@@ -751,7 +777,6 @@
                                                     <input type="number" value={cashAmount} onChange={e => setCashAmount(e.target.value)} className="w-full pl-12 pr-4 py-3 bg-slate-50 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 rounded-xl text-xl font-black text-slate-900 dark:text-white focus:outline-none focus:border-indigo-500 placeholder-slate-300" placeholder="0" />
                                                 </div>
                                             </div>
-                                            
                                             <div className={`p-4 rounded-xl border ${cashAmount && currentChange >= 0 ? 'bg-emerald-50 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-800' : cashAmount && currentChange < 0 ? 'bg-rose-50 dark:bg-rose-950/20 border-rose-200 dark:border-rose-800' : 'bg-slate-50 dark:bg-slate-850 border-slate-200 dark:border-slate-800'} transition-colors duration-300`}>
                                                 <p className="text-[10px] text-slate-500 dark:text-slate-400 uppercase font-bold tracking-wider mb-1">Uang Kembalian</p>
                                                 <p className={`text-2xl font-black ${cashAmount && currentChange >= 0 ? 'text-emerald-600 dark:text-emerald-400' : cashAmount && currentChange < 0 ? 'text-rose-500' : 'text-slate-400'}`}>
@@ -759,7 +784,6 @@
                                                 </p>
                                             </div>
                                         </div>
-
                                         <div className="mt-6 space-y-2">
                                             <button onClick={handlePosCheckout} disabled={posCart.length === 0 || !cashAmount || currentChange < 0} className="w-full py-4 bg-emerald-600 text-white rounded-xl text-sm font-black uppercase hover:bg-emerald-700 shadow transition-all disabled:opacity-50">Selesaikan Pembayaran</button>
                                             <button onClick={()=>{setPosCart([]); setCashAmount(''); setBookingCodeInput('');}} className="w-full py-3 bg-slate-100 dark:bg-slate-800 text-slate-500 dark:text-slate-400 hover:bg-slate-200 dark:hover:bg-slate-700 rounded-xl text-xs font-bold transition-colors">Batalkan Transaksi</button>
@@ -768,31 +792,23 @@
                                 </div>
                             </div>
                         )}
-
-                        {/* ========================================= */}
-                        {/* TAB 3: ADMIN (MANAJEMEN GUDANG & PEGAWAI) */}
-                        {/* ========================================= */}
                         {activeTab === 'admin' && currentUser && (currentUser.role === 'admin' || currentUser.role === 'owner') && (
                             <div className="space-y-6">
-                                
-                                <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-l-4 border-indigo-600 border-slate-200 dark:border-slate-800 space-y-4">
+                                <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-l-4 border-indigo-600 border-slate-200 dark:border-slate-800 space-y-3">
                                     <div>
-                                        <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">🔌 Pengaturan API Google Sheets</h3>
-                                        <p className="text-[10px] text-slate-500 mt-1">Masukkan URL Web App dari deployment Google Apps Script Anda. URL akan disimpan langsung ke penyimpanan lokal browser Anda.</p>
+                                        <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100">🔌 Status Koneksi Google Sheets</h3>
+                                        <p className="text-[10px] text-slate-500 mt-1">URL API kini dikonfigurasi sekali langsung di dalam kode (variabel <code>GAS_URL</code> di bagian atas file), sehingga tidak perlu ditempel ulang setiap kali membuka situs.</p>
                                     </div>
-                                    <div className="flex gap-2 flex-wrap sm:flex-nowrap">
-                                        <input type="text" value={gasUrl} onChange={e => {
-                                            setGasUrl(e.target.value);
-                                            localStorage.setItem("am_mart_gas_url", e.target.value);
-                                        }} placeholder="https://script.google.com/macros/s/.../exec" className="flex-1 min-w-[200px] px-3.5 py-2.5 border border-slate-200 dark:border-slate-700 bg-transparent rounded-xl text-xs font-mono focus:outline-none text-slate-850 dark:text-white" />
-                                        <button onClick={() => {
-                                            localStorage.removeItem("am_mart_gas_url");
-                                            setGasUrl("");
-                                            triggerNotification("Koneksi API direset.", "info");
-                                        }} className="px-4 py-2.5 bg-rose-600 text-white rounded-xl text-xs font-bold">Reset</button>
+                                    <div className="flex items-center gap-2 flex-wrap">
+                                        <span className={`text-[10px] font-bold px-3 py-1 rounded-full ${isOffline ? 'bg-amber-100 text-amber-800' : 'bg-emerald-100 text-emerald-800'}`}>
+                                            {isOffline ? '⚠️ Tidak terhubung (Mode Demo)' : '⚡ Terhubung ke Google Sheets'}
+                                        </span>
+                                        <button onClick={loadInitialData} className="px-3 py-1.5 bg-indigo-600 text-white rounded-lg text-xs font-bold hover:bg-indigo-700">🔄 Tes Ulang Koneksi</button>
                                     </div>
+                                    {isOffline && (
+                                        <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium">Jika seharusnya sudah terhubung: pastikan variabel <code>GAS_URL</code> sudah diganti dengan URL deploy Apps Script Anda, dan deployment di-set akses "Anyone".</p>
+                                    )}
                                 </div>
-
                                 <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800 space-y-4">
                                     <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100 dark:border-slate-800">
                                         <div>
@@ -824,10 +840,6 @@
                                 </div>
                             </div>
                         )}
-
-                        {/* ========================================= */}
-                        {/* TAB 4: OWNER (DASHBOARD ANALISIS) */}
-                        {/* ========================================= */}
                         {activeTab === 'owner' && currentUser?.role === 'owner' && (
                             <div className="space-y-6">
                                 <div className="bg-white dark:bg-slate-900 p-4 rounded-xl shadow-sm border border-slate-200 dark:border-slate-800 flex flex-wrap gap-4 items-end justify-between border-l-4 border-indigo-600">
@@ -841,7 +853,6 @@
                                         <button onClick={() => triggerNotification("Mengekspor laporan...", "info")} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white rounded text-xs font-bold shadow transition">📊 Ekspor Excel</button>
                                     </div>
                                 </div>
-                                
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                                     <div className="bg-gradient-to-br from-indigo-600 to-blue-700 p-6 rounded-2xl text-white shadow-lg">
                                         <p className="text-indigo-200 text-[10px] font-bold uppercase mb-1">Omset Berdasarkan Filter</p>
@@ -856,7 +867,6 @@
                                         <h3 className="text-2xl font-black text-slate-800 dark:text-white">{filteredTransactions.length} <span className="text-sm font-medium text-slate-500">Struk</span></h3>
                                     </div>
                                 </div>
-
                                 <div className="bg-white dark:bg-slate-900 p-5 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-800">
                                     <h3 className="text-sm font-bold text-slate-800 dark:text-slate-100 mb-4">📈 Grafik Tren Penjualan Harian (7 Hari Terakhir)</h3>
                                     <div className="h-48 flex items-end justify-around gap-2 mt-6 pt-4 border-b border-slate-200 dark:border-slate-800 relative">
@@ -876,8 +886,6 @@
                             </div>
                         )}
                     </main>
-
-                    {/* === MODALS POPUPS === */}
                     {customConfirm && (
                         <div className="fixed inset-0 z-[150] bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-sm p-6 shadow-2xl border dark:border-slate-800 text-center space-y-4">
@@ -891,17 +899,15 @@
                             </div>
                         </div>
                     )}
-
                     {notification && (
                         <div className={`fixed top-6 left-1/2 transform -translate-x-1/2 z-[100] flex items-center gap-2 px-6 py-3 rounded-full shadow-2xl transition-all duration-300 ${notification.type === 'error' ? 'bg-rose-600' : 'bg-emerald-600'} text-white`}>
                             <span className="font-bold text-sm tracking-wide">{notification.message}</span>
                         </div>
                     )}
-
-                    {/* MODAL LOGIN */}
                     {showLoginModal && (
                         <div className="fixed inset-0 z-[100] bg-slate-900/60 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-xs p-6 shadow-2xl border dark:border-slate-800">
+                                <div className="flex justify-center mb-3"><Logo className="h-10 w-auto" /></div>
                                 <h3 className="font-black text-center mb-1 text-lg text-slate-800 dark:text-white">Login Sistem</h3>
                                 <p className="text-[10px] text-center text-slate-500 mb-4">AM Mart Kampung Pantai Harapan</p>
                                 <form onSubmit={handleLoginSubmit} className="space-y-3 text-xs">
@@ -921,8 +927,6 @@
                             </div>
                         </div>
                     )}
-
-                    {/* MODAL INPUT DATA BARANG */}
                     {showProductModal && (
                         <div className="fixed inset-0 z-[100] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white dark:bg-slate-900 rounded-2xl w-full max-w-sm overflow-hidden shadow-2xl border dark:border-slate-800">
@@ -953,8 +957,6 @@
                             </div>
                         </div>
                     )}
-
-                    {/* MODAL STRUK BOOKING PELANGGAN */}
                     {showReceiptModal && (
                         <div className="fixed inset-0 z-[100] bg-slate-900/70 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white rounded-2xl w-full max-w-xs p-6 text-center shadow-2xl">
@@ -965,8 +967,6 @@
                             </div>
                         </div>
                     )}
-
-                    {/* MODAL STRUK PEMBAYARAN KASIR */}
                     {showPaymentSuccess && (
                         <div className="fixed inset-0 z-[100] bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
                             <div className="bg-white rounded-xl w-full max-w-sm p-6 shadow-2xl font-mono text-xs relative text-slate-800">
@@ -975,7 +975,6 @@
                                     <p className="text-[10px] text-slate-500 font-bold tracking-widest">KAMPUNG PANTAI HARAPAN</p>
                                     <div className="mt-2 text-xs bg-slate-100 py-1 rounded font-mono text-slate-600 border border-slate-200">LUNAS - {showPaymentSuccess.id}</div>
                                 </div>
-                                
                                 <div className="space-y-2 mb-4">
                                     {showPaymentSuccess.items.map((i, idx) => (
                                         <div key={idx} className="flex justify-between">
@@ -984,25 +983,21 @@
                                         </div>
                                     ))}
                                 </div>
-
                                 <div className="border-t-2 border-dashed border-slate-300 pt-3 space-y-1.5 text-sm">
                                     <div className="flex justify-between font-black text-slate-900"><span>TOTAL</span><span>Rp {showPaymentSuccess.total.toLocaleString()}</span></div>
                                     <div className="flex justify-between font-bold text-slate-600"><span>TUNAI</span><span>Rp {showPaymentSuccess.cash.toLocaleString()}</span></div>
                                     <div className="flex justify-between font-black text-emerald-600 mt-2 pt-2 border-t border-slate-200"><span>KEMBALI</span><span>Rp {showPaymentSuccess.change.toLocaleString()}</span></div>
                                 </div>
-                                
                                 <button onClick={() => setShowPaymentSuccess(null)} className="w-full py-3 mt-4 bg-slate-900 text-white rounded-lg font-sans font-bold transition hover:bg-slate-800 shadow-lg">Selesai Transaksi</button>
                             </div>
                         </div>
                     )}
-
                     <footer className="mt-auto py-6 bg-white dark:bg-slate-900 border-t border-slate-200 dark:border-slate-800 text-center text-[10px] font-medium text-slate-400 transition-colors duration-300">
                         <p>© 2026 AM Mart. Sistem POS Enterprise Terintegrasi Kamera Scanner & Google Sheets.</p>
                     </footer>
                 </div>
             );
         };
-
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
     </script>
